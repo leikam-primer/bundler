@@ -1,9 +1,5 @@
-const output = (s) => {
-  if (typeof window === "undefined") {
-    console.log(s);
-  } else {
-    window.bundled = s;
-  }
-};
+const { conditionalOutput } = require("./output");
+const { foo } = require("./foo");
+const { HELLO, WORLD } = require("./constants");
 
-output("hello world");
+conditionalOutput(`${HELLO} ${WORLD}`);
