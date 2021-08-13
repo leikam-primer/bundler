@@ -1,0 +1,30 @@
+<html>
+  <head>
+    <title>Bundler</title>
+  </head>
+  <body>
+    <h1>Bundler!</h1>
+    <p id="status">loading</p>
+    <code id="output"></code>
+    <script src="./index.js"></script>
+    <script>
+      window.addEventListener("load", function () {
+        function status(s) {
+          document.getElementById("status").innerHTML = s;
+        }
+
+        function output(s) {
+          document.getElementById("output").innerHTML = s;
+        }
+
+        if (window.bundled) {
+          status("success");
+          output(window.bundled);
+        } else {
+          status("failed");
+          output("bundle error");
+        }
+      });
+    </script>
+  </body>
+</html>
