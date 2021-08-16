@@ -73,7 +73,7 @@ const replaceImports = (dependency, bundle) => {
   const code = importCode(dependency);
   const compiledImports = dependency.imports.reduce((output, variable) => {
     const slug = makeSlug(dependency.importPath, variable);
-    const snippet = `\n/* imported ${variable} from ${dependency.importPath} */\nconst ${slug} = ${code[variable]};\n\n`;
+    const snippet = `\n/* imported _${variable} from ${dependency.importPath} */\nconst ${slug} = ${code[variable]};\n\n`;
     return output + snippet;
   }, "");
   if (bundle.indexOf(dependency.importStatement) > -1) {
