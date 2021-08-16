@@ -1,7 +1,7 @@
-const { NODE_WINDOW_TYPE } = require("./constants");
+const { isNode } = require("./utils/index");
 
 const conditionalOutput = (s) => {
-  if (typeof window === NODE_WINDOW_TYPE) {
+  if (isNode()) {
     console.log(s);
   } else {
     window.bundled = s;

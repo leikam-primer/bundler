@@ -3,15 +3,9 @@ const path = require("path");
 const { execSync } = require("child_process");
 
 const makeSlug = (sourceFilename, variable) => {
-  return "module_" + sourceFilename.replace(/[^\w]+/, "_") + "_" + variable;
+  const slug = sourceFilename.replace(/[^\w]+/g, "_");
+  return "module_" + slug + "_" + variable;
 };
-
-const getSourceFilename = (dependency) => dependency[2];
-
-const getImportStatement = (dependency) => dependency[0];
-
-const getImports = (dependency) =>
-  dependency[1].split(",").map((i) => i.trim());
 
 // returns any "requires" lines in the given filename
 const getRequires = (filename) => {
@@ -25,19 +19,31 @@ const getRequires = (filename) => {
   return content;
 };
 
+// maps regex match fields to dependency object
+const matchToObject = (filename) => (match) => {
+  return {
+    importPath: match[2],
+    path: path.resolve(filename, "../", match[2]),
+    importStatement: match[0],
+    imports: match[1].split(",").map((i) => i.trim()),
+  };
+};
+
 const getDependencies = (filename, all = []) => {
   const content = getRequires(filename);
   const regexp = new RegExp(
     /const {([\w\s,]+)} = require\("([\w./]+)"\);/,
     "g"
   );
-  const dependencies = [...content.matchAll(regexp)];
+  const dependencies = [...content.matchAll(regexp)].map(
+    matchToObject(filename)
+  );
   // return dependencies;
   const allPlus = [...all, ...dependencies];
   if (dependencies.length > 0) {
     const items = dependencies
       .map((item) => {
-        const fn = path.resolve(filename, "../", getSourceFilename(item));
+        const fn = path.resolve(filename, "../", item.importPath);
         return getDependencies(fn, []);
       })
       .flat();
@@ -48,10 +54,8 @@ const getDependencies = (filename, all = []) => {
 
 // extract the code
 const importCode = (dependency) => {
-  const imports = getImports(dependency);
-  const fn = path.resolve("src/", getSourceFilename(dependency));
-  const exported = require(fn);
-  const code = imports.reduce((acc, k) => {
+  const exported = require(dependency.path);
+  const code = dependency.imports.reduce((acc, k) => {
     const value =
       typeof exported[k] === "string"
         ? `'${exported[k]}'`
@@ -67,16 +71,13 @@ const importCode = (dependency) => {
 // rewrite all of the import lines with code snippets
 const replaceImports = (dependency, bundle) => {
   const code = importCode(dependency);
-  const importStatement = getImportStatement(dependency);
-  const imports = getImports(dependency);
-  const sourceFilename = getSourceFilename(dependency);
-  const compiledImports = imports.reduce((output, variable) => {
-    const slug = makeSlug(sourceFilename, variable);
-    const snippet = `\n/* imported ${variable} from ${sourceFilename} */\nconst ${slug} = ${code[variable]};\n\n`;
+  const compiledImports = dependency.imports.reduce((output, variable) => {
+    const slug = makeSlug(dependency.importPath, variable);
+    const snippet = `\n/* imported ${variable} from ${dependency.importPath} */\nconst ${slug} = ${code[variable]};\n\n`;
     return output + snippet;
   }, "");
-  if (bundle.indexOf(importStatement) > -1) {
-    return bundle.replace(importStatement, compiledImports);
+  if (bundle.indexOf(dependency.importStatement) > -1) {
+    return bundle.replace(dependency.importStatement, compiledImports);
   } else {
     return compiledImports + bundle;
   }
@@ -84,9 +85,8 @@ const replaceImports = (dependency, bundle) => {
 
 // update code references for this dependency
 const replaceReferences = (dependency, bundle) => {
-  const sourceFilename = getSourceFilename(dependency);
-  const imports = getImports(dependency);
-  imports.forEach((variable) => {
+  const sourceFilename = dependency.importPath;
+  dependency.imports.forEach((variable) => {
     // only replace it when the variable is not preceeded by _
     const varRegex = new RegExp(`(?<!_)${variable}`, "g");
     const slug = makeSlug(sourceFilename, variable);
@@ -107,8 +107,9 @@ const main = (entryFilename = "src/index.js") => {
       bundle = replaceImports(dependency, bundle);
       bundle = replaceReferences(dependency, bundle);
     } catch (err) {
+      console.error(err);
       throw new Error(
-        "unresolvable dependency found: " + getSourceFilename(dependency)
+        "unresolvable dependency found: " + dependency.importPath
       );
     }
   }
