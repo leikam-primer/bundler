@@ -1,17 +1,9 @@
 const { readFileSync, writeFileSync } = require("fs");
 const path = require("path");
+const { execSync } = require("child_process");
 
 const makeSlug = (sourceFilename, variable) => {
   return "module_" + sourceFilename.replace(/[^\w]+/, "_") + "_" + variable;
-};
-
-const getDependencies = (file) => {
-  const regexp = new RegExp(
-    /const {([\w\s,]+)} = require\("([\w./]+)"\);/,
-    "g"
-  );
-  const dependencies = [...file.matchAll(regexp)];
-  return dependencies;
 };
 
 const getSourceFilename = (dependency) => dependency[2];
@@ -21,13 +13,49 @@ const getImportStatement = (dependency) => dependency[0];
 const getImports = (dependency) =>
   dependency[1].split(",").map((i) => i.trim());
 
+// returns any "requires" lines in the given filename
+const getRequires = (filename) => {
+  const importsCommand = `grep 'require' ${filename.replace(".js", "")}.js`;
+  let content = "";
+  try {
+    content = execSync(importsCommand, { encoding: "utf-8" });
+  } catch (err) {
+    return "";
+  }
+  return content;
+};
+
+const getDependencies = (filename, all = []) => {
+  const content = getRequires(filename);
+  const regexp = new RegExp(
+    /const {([\w\s,]+)} = require\("([\w./]+)"\);/,
+    "g"
+  );
+  const dependencies = [...content.matchAll(regexp)];
+  // return dependencies;
+  const allPlus = [...all, ...dependencies];
+  if (dependencies.length > 0) {
+    const items = dependencies
+      .map((item) => {
+        const fn = path.resolve(filename, "../", getSourceFilename(item));
+        return getDependencies(fn, []);
+      })
+      .flat();
+    return [...allPlus, ...items];
+  }
+  return allPlus;
+};
+
 // extract the code
 const importCode = (dependency) => {
   const imports = getImports(dependency);
   const fn = path.resolve("src/", getSourceFilename(dependency));
-  const x = require(fn);
+  const exported = require(fn);
   const code = imports.reduce((acc, k) => {
-    const value = typeof x[k] === "string" ? `'${x[k]}'` : x[k].toString();
+    const value =
+      typeof exported[k] === "string"
+        ? `'${exported[k]}'`
+        : exported[k].toString();
     return {
       ...acc,
       [k]: value,
@@ -36,70 +64,57 @@ const importCode = (dependency) => {
   return code;
 };
 
-const getStartOfCode = (bundle) => {
-  const lastRequire = bundle.lastIndexOf("require");
-  const startOfCode = bundle.indexOf(";", lastRequire);
-  return startOfCode;
-};
-
 // rewrite all of the import lines with code snippets
 const replaceImports = (dependency, bundle) => {
   const code = importCode(dependency);
   const importStatement = getImportStatement(dependency);
-  const startOfCode = getStartOfCode(bundle);
-  let head = bundle.slice(0, startOfCode + 1);
   const imports = getImports(dependency);
   const sourceFilename = getSourceFilename(dependency);
-  const headLines = imports.reduce((output, variable) => {
+  const compiledImports = imports.reduce((output, variable) => {
     const slug = makeSlug(sourceFilename, variable);
     const snippet = `\n/* imported ${variable} from ${sourceFilename} */\nconst ${slug} = ${code[variable]};\n\n`;
     return output + snippet;
   }, "");
-
-  head = head.replace(importStatement, headLines);
-  return head;
+  if (bundle.indexOf(importStatement) > -1) {
+    return bundle.replace(importStatement, compiledImports);
+  } else {
+    return compiledImports + bundle;
+  }
 };
 
-// look into the body of the code
+// update code references for this dependency
 const replaceReferences = (dependency, bundle) => {
-  const startOfCode = getStartOfCode(bundle);
   const sourceFilename = getSourceFilename(dependency);
   const imports = getImports(dependency);
-  let tail = bundle.slice(startOfCode + 1);
   imports.forEach((variable) => {
-    const varRegex = new RegExp(variable, "g");
+    // only replace it when the variable is not preceeded by _
+    const varRegex = new RegExp(`(?<!_)${variable}`, "g");
     const slug = makeSlug(sourceFilename, variable);
-    tail = tail.replace(varRegex, slug);
+    bundle = bundle.replace(varRegex, slug);
   });
-  return tail;
+  return bundle;
 };
 
-const main = () => {
+const main = (entryFilename = "src/index.js") => {
   // read the file
-  const file = readFileSync("src/index.js").toString();
-  let bundle = file;
+  const content = readFileSync(entryFilename).toString();
+  let bundle = content;
 
   // collect the code
-  const dependencies = getDependencies(file);
+  const dependencies = getDependencies(entryFilename);
   for (const dependency of dependencies) {
     try {
-      const head = replaceImports(dependency, bundle);
-      const tail = replaceReferences(dependency, bundle);
-      bundle = head + tail;
+      bundle = replaceImports(dependency, bundle);
+      bundle = replaceReferences(dependency, bundle);
     } catch (err) {
-      console.log(err.message);
-      // remove the import
-      const importStatement = getImportStatement(dependency);
-      bundle = bundle.replace(
-        importStatement,
-        `/* unresolvable import: "${importStatement}" */\n`
+      throw new Error(
+        "unresolvable dependency found: " + getSourceFilename(dependency)
       );
     }
   }
-
   // write the file
   writeFileSync("dist/index.js", bundle);
 };
 
-main();
+main(process.argv[2]);
 console.log("bundler finished");
